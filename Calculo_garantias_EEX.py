@@ -28,10 +28,12 @@ mayoracion = 1.2
 inicio = datetime.now()
 
 # Carpetas
+# carpeta_destino = ''
 carpeta_destino = ''
 carpeta_clientes = ''
 carpeta_posiciones_local = ''
 carpeta_posiciones_servidor = ''
+# carpeta_span = ''
 carpeta_span = ''
 carpeta_garantias_cliente = carpeta_destino + 'Garantias por cliente\\'
 carpeta_garantias_totales = carpeta_destino + 'Garantias totales\\'
@@ -44,7 +46,7 @@ print('Ejecucion empezada ', inicio)
 
 # Fechas
 fecha_hoy = date.today()
-# fecha_hoy = date(2022, 1, 31) # aqui se puede meter la fecha a mano
+# fecha_hoy = date(2022, 2, 16)
 fecha_correo = fecha_hoy.strftime('%d-%m-%Y')
 ano_actual = fecha_hoy.year
 mes_actual = fecha_hoy.month
@@ -54,7 +56,7 @@ trimestres_restantes = list(np.unique(fechas_restantes.quarter)+1)
 meses_restantes = list(np.unique(fechas_restantes.month)+1)
 semanas_restantes = list(np.unique(fechas_restantes.isocalendar().week)+1)
 dias_restantes = len(pd.date_range(fecha_hoy + timedelta(days=1), date(ano_actual, mes_actual, monthrange(ano_actual, mes_actual)[1])))
-fechas_producto_dia = [(fecha_hoy + timedelta(days=d-3)).strftime('%d%Y%m') for d in range(3)]
+fechas_producto_dia = [(fecha_hoy + timedelta(days=d-3)).strftime('%d%Y%m') for d in range(4)]
 lista_anos = list(range(ano_actual, ano_actual+11))
 lista_codigo_anos = list(range(ano_actual+1-2000, ano_actual+11-2000)) # para los productos cal
 lista_trimestres = list(range(1,5))
@@ -100,7 +102,7 @@ archivo_exportacion = 'Garantias_EEX_{}.csv'.format(fecha1_span)
 dict_garantias = {}
 tabla_garantias_totales = pd.DataFrame(columns=['CodCliente', 'Bolsa', 'Nombre', 'Alias', 'Valor', 'Code', 'Net',
                                                 'Multiplicador', 'PriceScanRange', 'PriceScanRisk',
-                                                'CompositeDelta', 'ActiveScenario', 'OriginalDelta(Gross)',
+                                                'ActiveScenario', 'OriginalDelta(Gross)',
                                                 'OriginalDelta(Net)', 'SCANContribution', 'IC_charge', 'Remaining_Delta',
                                                 'SPAN_Requirements', 'Mayoracion', 'SPAN_Requirements_R4'])
 
@@ -306,13 +308,18 @@ def calcula_ic_credit(df):
     for f in range(len(df)):
         com_a = df['CommodityA'][f]
         com_b = df['CommodityB'][f]
+        # Hay que actualizar las delas de los productos tanto en commodity A como B
         df['OriginalDelta(Net)_A'][f+1:][df['CommodityA'] == com_a] = df['Remaining_Delta_A'][f]
         df['OriginalDelta(Net)_B'][f+1:][df['CommodityB'] == com_b] = df['Remaining_Delta_B'][f]
-        df['IC_charge_A'] = abs((df[['OriginalDelta(Net)_A', 'PriceScanRange_A', 'Credit']].prod(axis=1)*100)/df['Multiplicador_A'])
-        df['IC_charge_B'] = abs((df[['OriginalDelta(Net)_B', 'PriceScanRange_B', 'Credit']].prod(axis=1)*100)/df['Multiplicador_B'])
+        df['OriginalDelta(Net)_B'][f+1:][df['CommodityB'] == com_a] = df['Remaining_Delta_A'][f]
+        df['OriginalDelta(Net)_A'][f+1:][df['CommodityA'] == com_b] = df['Remaining_Delta_B'][f]
+        # Recalcula los IC charges
+        df['IC_charge_A'] = abs((df[['OriginalDelta(Net)_A', 'PriceScanRange_A', 'Credit']].prod(axis=1)) / df['Multiplicador_A'])
+        df['IC_charge_B'] = abs((df[['OriginalDelta(Net)_B', 'PriceScanRange_B', 'Credit']].prod(axis=1)) / df['Multiplicador_B'])
         df['IC_charge'] = df[['IC_charge_A', 'IC_charge_B']].min(axis=1).round(0)
-        df['Remaining_Delta_A'] = df['OriginalDelta(Net)_A'].subtract(0.01*np.sign(df['OriginalDelta(Net)_A'])*df[['IC_charge', 'Multiplicador_A']].prod(axis=1)/df[['PriceScanRange_A', 'Credit']].prod(axis=1)).round(4)
-        df['Remaining_Delta_B'] = df['OriginalDelta(Net)_B'].subtract(0.01*np.sign(df['OriginalDelta(Net)_B'])*df[['IC_charge', 'Multiplicador_B']].prod(axis=1)/df[['PriceScanRange_B', 'Credit']].prod(axis=1)).round(4)
+        # Recalcula los remaining delta
+        df['Remaining_Delta_A'] = df['OriginalDelta(Net)_A'].subtract(np.sign(df['OriginalDelta(Net)_A']) * df[['IC_charge', 'Multiplicador_A']].prod(axis=1) / df[['PriceScanRange_A', 'Credit']].prod(axis=1)).round(4)
+        df['Remaining_Delta_B'] = df['OriginalDelta(Net)_B'].subtract(np.sign(df['OriginalDelta(Net)_B']) * df[['IC_charge', 'Multiplicador_B']].prod(axis=1) / df[['PriceScanRange_B', 'Credit']].prod(axis=1)).round(4)
     # Devuelve el resultado
     return df
 
@@ -400,10 +407,9 @@ tabla_scan_ranges['Code'] = tabla_scan_ranges.Product_ID + tabla_scan_ranges.Exp
 # Tabla de garantias
 tabla_garantias = tabla_posiciones_ecc.join(tabla_scan_ranges[['Code', 'PriceScanRange']].set_index('Code'), on='Code')
 tabla_garantias['PriceScanRisk'] = tabla_garantias['PriceScanRange'] / tabla_garantias['Multiplicador']
-tabla_garantias['CompositeDelta'] = 1
 tabla_garantias['ActiveScenario'] = np.sign(tabla_garantias.Net) * tabla_garantias.PriceScanRange
-tabla_garantias['OriginalDelta(Gross)'] = (tabla_garantias[['Multiplicador', 'CompositeDelta']].prod(axis=1) * tabla_garantias.Net.abs()) / 100
-tabla_garantias['OriginalDelta(Net)'] = (tabla_garantias[['Multiplicador', 'CompositeDelta', 'Net']].prod(axis=1)) / 100
+tabla_garantias['OriginalDelta(Gross)'] = tabla_garantias[['Multiplicador', 'Net']].abs().prod(axis=1)
+tabla_garantias['OriginalDelta(Net)'] = tabla_garantias[['Multiplicador', 'Net']].prod(axis=1)
 tabla_garantias['SCANContribution'] = tabla_garantias[['Net', 'ActiveScenario']].prod(axis=1)
 tabla_garantias['IC_charge'] = 0
 tabla_garantias['Remaining_Delta'] = 0
@@ -430,6 +436,9 @@ tabla_intercommodity = tabla_intercommodity.join(tabla_ic_spreads[['IC_Code', 'R
 
 # 2.3. Bucle por cliente (codigo)
 for codigo in lista_codigos:
+    '''
+    codigo = 53637032
+    '''    
     # Obtiene las garantias en funcion de la bolsa o del alias
     garantias = tabla_garantias[tabla_garantias['CodCliente'] == codigo]
     garantias.set_index('Code', inplace=True)
@@ -459,24 +468,19 @@ for codigo in lista_codigos:
         tabla_spreads = tabla_spreads.join(garantias.iloc[:, 5:], on='CommodityA')
         tabla_spreads = tabla_spreads.merge(garantias.iloc[:, 5:], left_on='CommodityB', right_index=True, suffixes=['_A', '_B'])
         tabla_spreads.sort_values('Credit', ascending=False, inplace=True)
-        tabla_spreads['IC_charge_A'] = abs((tabla_spreads[['OriginalDelta(Net)_A', 'PriceScanRange_A', 'Credit']].prod(axis=1)*100)/tabla_spreads['Multiplicador_A'])
-        tabla_spreads['IC_charge_B'] = abs((tabla_spreads[['OriginalDelta(Net)_B', 'PriceScanRange_B', 'Credit']].prod(axis=1)*100)/tabla_spreads['Multiplicador_B'])
+        tabla_spreads['IC_charge_A'] = abs((tabla_spreads[['OriginalDelta(Net)_A', 'PriceScanRange_A', 'Credit']].prod(axis=1))/tabla_spreads['Multiplicador_A'])
+        tabla_spreads['IC_charge_B'] = abs((tabla_spreads[['OriginalDelta(Net)_B', 'PriceScanRange_B', 'Credit']].prod(axis=1))/tabla_spreads['Multiplicador_B'])
         tabla_spreads['IC_charge'] = tabla_spreads[['IC_charge_A', 'IC_charge_B']].min(axis=1).round(0)
-        tabla_spreads['Remaining_Delta_A'] = tabla_spreads['OriginalDelta(Net)_A'].subtract(0.01*np.sign(tabla_spreads['OriginalDelta(Net)_A'])*tabla_spreads[['IC_charge', 'Multiplicador_A']].prod(axis=1)/tabla_spreads[['PriceScanRange_A', 'Credit']].prod(axis=1)).round(4)
-        tabla_spreads['Remaining_Delta_B'] = tabla_spreads['OriginalDelta(Net)_B'].subtract(0.01*np.sign(tabla_spreads['OriginalDelta(Net)_B'])*tabla_spreads[['IC_charge', 'Multiplicador_B']].prod(axis=1)/tabla_spreads[['PriceScanRange_B', 'Credit']].prod(axis=1)).round(4)
+        tabla_spreads['Remaining_Delta_A'] = tabla_spreads['OriginalDelta(Net)_A'].subtract(np.sign(tabla_spreads['OriginalDelta(Net)_A'])*tabla_spreads[['IC_charge', 'Multiplicador_A']].prod(axis=1)/tabla_spreads[['PriceScanRange_A', 'Credit']].prod(axis=1)).round(4)
+        tabla_spreads['Remaining_Delta_B'] = tabla_spreads['OriginalDelta(Net)_B'].subtract(np.sign(tabla_spreads['OriginalDelta(Net)_B'])*tabla_spreads[['IC_charge', 'Multiplicador_B']].prod(axis=1)/tabla_spreads[['PriceScanRange_B', 'Credit']].prod(axis=1)).round(4)
         tabla_spreads = calcula_ic_credit(tabla_spreads)
-        # Agrupa y suma los spreads para meterlo en la tabla de garantias
-        tabla_spreads = tabla_spreads[tabla_spreads['IC_charge'] != 0]
+        # Agrupa y suma los spreads para meterlo en la tabla de garantias --> no tiene sentido porque hay productos en clase A y B
+        # tabla_spreads = tabla_spreads[tabla_spreads['IC_charge'] != 0]
         # Mete los valores de IC credit y remaning delta en la tabla de garantias
         for producto in garantias.index:
-            if (tabla_spreads['CommodityA'] == producto).any():
-                garantias['IC_charge'][producto] = tabla_spreads.loc[tabla_spreads['CommodityA'] == producto, 'IC_charge'].sum()
-                garantias['Remaining_Delta'][producto] = np.sign(tabla_spreads.loc[tabla_spreads['CommodityA'] == producto, 'Remaining_Delta_A'].min()) * tabla_spreads.loc[tabla_spreads['CommodityA'] == producto, 'Remaining_Delta_A'].abs().min()
-            elif (tabla_spreads['CommodityB'] == producto).any():
-                garantias['IC_charge'][producto] = tabla_spreads.loc[tabla_spreads['CommodityB'] == producto, 'IC_charge'].sum()
-                garantias['Remaining_Delta'][producto] = np.sign(tabla_spreads.loc[tabla_spreads['CommodityB'] == producto, 'Remaining_Delta_B'].min()) * tabla_spreads.loc[tabla_spreads['CommodityB'] == producto, 'Remaining_Delta_B'].abs().min()
-            else: 
-                continue
+            garantias['IC_charge'][producto] = tabla_spreads.loc[(tabla_spreads['CommodityA']==producto) | (tabla_spreads['CommodityB']==producto), 'IC_charge'].sum()
+            garantias['Remaining_Delta'][producto] = np.sign(tabla_spreads.loc[(tabla_spreads['CommodityA']==producto) | (tabla_spreads['CommodityB']==producto), 'Remaining_Delta_A'].min()) * tabla_spreads.loc[(tabla_spreads['CommodityA']==producto) | (tabla_spreads['CommodityB']==producto), 'Remaining_Delta_A'].abs().min()
+        # tabla_spreads.to_excel(r'C:\Users\hlopez\Documents\Pruebas Garantias EEX'+'\Spreads.xlsx')
     # Calcula las garantias totales = contribucion de cada producto - la minoracion de los intercommodity
     garantias['SPAN_Requirements'] = garantias['SCANContribution'] - garantias['IC_charge']
     # garantias['Mayoracion'] = np.where((garantias['Alias'] == 'Alcanzia') | (garantias['Alias'] == 'Estabanell'), 1.5, mayoracion)
@@ -515,10 +519,9 @@ tabla_garantias_om = tabla_garantias_om.groupby(['Valor', 'Code']).sum().reset_i
 tabla_garantias_om = calcula_cvf(tabla_garantias_om, mes_actual, fecha_hoy)
 tabla_garantias_om = tabla_garantias_om.join(tabla_scan_ranges[['Code', 'PriceScanRange']].set_index('Code'), on='Code')
 tabla_garantias_om['PriceScanRisk'] = tabla_garantias_om['PriceScanRange']/ tabla_garantias_om['Multiplicador']
-tabla_garantias_om['CompositeDelta'] = 1
 tabla_garantias_om['ActiveScenario'] = np.sign(tabla_garantias_om.Net) * tabla_garantias_om.PriceScanRange
-tabla_garantias_om['OriginalDelta(Gross)'] = (tabla_garantias_om[['Multiplicador', 'CompositeDelta']].prod(axis=1) * tabla_garantias_om.Net.abs()) / 100
-tabla_garantias_om['OriginalDelta(Net)'] = (tabla_garantias_om[['Multiplicador', 'CompositeDelta', 'Net']].prod(axis=1)) / 100
+tabla_garantias_om['OriginalDelta(Gross)'] = tabla_garantias_om[['Multiplicador', 'Net']].prod(axis=1).abs()
+tabla_garantias_om['OriginalDelta(Net)'] = tabla_garantias_om[['Multiplicador', 'Net']].prod(axis=1)
 tabla_garantias_om['SCANContribution'] = tabla_garantias_om[['Net', 'ActiveScenario']].prod(axis=1)
 tabla_garantias_om.set_index('Code', inplace=True)
 tabla_garantias_om['IC_charge'] = 0
